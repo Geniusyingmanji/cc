@@ -11,6 +11,8 @@ git clone https://github.com/Geniusyingmanji/cc.git claude_transfer
 
 Private payloads are intentionally kept out of Git by `.gitignore`:
 
+- `current_private_configs_*/`: private config bundle directory for restoring cc-connect/Claude/Codex configuration.
+- `private-configs_*.tar.zst`: private config bundle archive.
 - `hermes-migrate-corrected_*.part-*`: Claude skills, Claude project memory, and cc-connect config split into parts.
 - `cc-connect-runtime_*.tar.gz`: cc-connect runtime state, including `~/.cc-connect/sessions/`.
 - `claude-home-no-projects_*.tar.zst`: current `~/.claude` state excluding `~/.claude/projects`.
@@ -19,6 +21,55 @@ Private payloads are intentionally kept out of Git by `.gitignore`:
 
 These payloads can contain auth material. Copy them into this directory through
 a private channel before restoring.
+
+## Fresh cc-connect restore on a new server
+
+This is the expected path for bringing up cc-connect on a new machine.
+
+```bash
+mkdir -p ~/workspace-gzy/zyf
+cd ~/workspace-gzy/zyf
+git clone https://github.com/Geniusyingmanji/cc.git claude_transfer
+cd claude_transfer
+```
+
+Copy the private config archive into `claude_transfer/`:
+
+```text
+private-configs_20260524_115653.tar.zst
+```
+
+Restore the private config bundle:
+
+```bash
+tar --zstd -xf private-configs_20260524_115653.tar.zst
+cd current_private_configs_20260524_115653
+bash restore_private_configs.sh
+```
+
+Install and start cc-connect:
+
+```bash
+cd ~/workspace-gzy/zyf/cc-connect-server
+npm install
+bash manage.sh status
+bash manage.sh start
+bash manage.sh logs
+```
+
+The cleanest restore is to keep the same path on the new server:
+
+```text
+/home/azureuser/workspace-gzy/zyf
+```
+
+If the username or workspace path differs, update these files before starting:
+
+- `~/workspace-gzy/zyf/cc-connect-server/config.toml`
+- `~/workspace-gzy/zyf/cc-connect-server/manage.sh`
+- `~/workspace-gzy/zyf/cc-connect-server/watchdog.sh`
+
+For just restoring cc-connect receive/reply behavior, the private config bundle is enough. For Claude Code `/resume` into old project conversations, restore the larger `~/.claude/projects` session archive separately and preserve old workspace paths or create matching symlinks.
 
 ## Restore on new machine using the older split payload
 
