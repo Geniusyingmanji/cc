@@ -1,0 +1,27 @@
+# Private migration payloads. Keep these local or transfer over a private channel.
+*.tar
+*.tar.gz
+*.tar.zst
+*.tgz
+*.zip
+*.part-*
+current_*/
+
+# Local credentials and runtime-only scripts.
+watchdog.sh
+proxy-18899.js
+*.env
+*.key
+*.pem
+*.crt
+*.sqlite
+*.sqlite-*
+.credentials*
+auth.json
+config.toml
+
+# Tool/runtime noise.
+node_modules/
+.DS_Store
+*.log
+tmp/
