@@ -36,15 +36,22 @@ cd claude_transfer
 Copy the private config archive into `claude_transfer/`:
 
 ```text
-private-configs_20260524_115653.tar.zst
+private-configs_20260531_081355.tar.zst
 ```
 
 Restore the private config bundle:
 
 ```bash
-tar --zstd -xf private-configs_20260524_115653.tar.zst
-cd current_private_configs_20260524_115653
+tar --zstd -xf private-configs_20260531_081355.tar.zst
+cd current_private_configs_20260531_081355
 bash restore_private_configs.sh
+```
+
+Latest local private snapshot prepared in this workspace:
+
+```text
+current_private_configs_20260531_081355/
+current_private_configs_20260531_081355/private-configs_20260531_081355.tar.zst
 ```
 
 Install and start cc-connect:
