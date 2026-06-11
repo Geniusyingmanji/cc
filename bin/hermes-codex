@@ -566,6 +566,7 @@ def run_claude(prompt: str, parsed: dict, resume_thread: str, force_new: bool, a
         emit_text(wrapped, thread_id, as_json=as_json)
         return 0
     env = load_proxy_env(os.environ.copy())
+    env["CLAUDE_CONFIG_DIR"] = str(BASE / "claude-home")  # pin isolated creds; never write global ~/.claude
     env["HERMES_ACTIVE_PROVIDER"] = "claudecode"
     cwd = parsed.get("cd") or str(WORK_DIR)
     started = False
