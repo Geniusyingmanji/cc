@@ -4,7 +4,7 @@ set -euo pipefail
 # cron has no $USER; fall back to id -un (set -u safe)
 USER="${USER:-$(id -un)}"
 
-BASE="/mdr5/guest/users/zhouyan/share/quantaalpha/ymj"
+BASE="/mdr5/guest/users/zhangshuo/zyf"
 DIR="$BASE/cc-connect-server"
 CONFIG="$DIR/config.toml"
 LOG="$DIR/logs/cc-connect.log"
@@ -22,7 +22,7 @@ export HERMES_STATE_DIR="$DIR/hermes_state"
 export HERMES_WORK_DIR="$BASE"
 export HERMES_DEFAULT_PROVIDER="claudecode"
 export HERMES_CODEX_REAL="$HOME/.local/bin/codex-real"
-export HERMES_CLAUDE_BIN="$HOME/.local/bin/claude"
+export HERMES_CLAUDE_BIN="/usr/bin/claude"
 export HERMES_CLAUDE_MODEL="claude-opus-4-8"
 export HERMES_CLAUDE_EFFORT="high"
 export HERMES_CLAUDE_PERMISSION_MODE="bypassPermissions"

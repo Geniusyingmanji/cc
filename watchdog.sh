@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE="/mdr5/guest/users/zhouyan/share/quantaalpha/ymj"
+BASE="/mdr5/guest/users/zhangshuo/zyf"
 DIR="$BASE/cc-connect-server"
 LOG="$DIR/logs/watchdog.log"
 

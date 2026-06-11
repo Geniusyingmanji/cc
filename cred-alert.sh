@@ -4,7 +4,7 @@
 # Cron: every 15 min. Dedup: one alert per 2h while expired.
 set -euo pipefail
 
-D="/mdr5/guest/users/zhouyan/share/quantaalpha/ymj/cc-connect-server"
+D="/mdr5/guest/users/zhangshuo/zyf/cc-connect-server"
 CRED="$D/claude-home/.credentials.json"
 STATE="$D/run/cred-alert.last"
 

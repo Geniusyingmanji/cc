@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 
 
-BASE = Path(os.environ.get("HERMES_BASE", "/mdr5/guest/users/zhouyan/share/quantaalpha/ymj/cc-connect-server"))
+BASE = Path(os.environ.get("HERMES_BASE", "/mdr5/guest/users/zhangshuo/zyf/cc-connect-server"))
 STATE_DIR = Path(os.environ.get("HERMES_STATE_DIR", str(BASE / "hermes_state")))
 PROVIDER_FILE = STATE_DIR / "provider.txt"
 POLICY_FILE = STATE_DIR / "policy.md"
@@ -18,8 +18,8 @@ MEMORY_FILE = STATE_DIR / "memory.md"
 SESSIONS_FILE = STATE_DIR / "sessions.json"
 LOG_FILE = STATE_DIR / "hermes.log"
 
-WORK_DIR = Path(os.environ.get("HERMES_WORK_DIR", "/mdr5/guest/users/zhouyan/share/quantaalpha/ymj"))
-CLAUDE_BIN = os.environ.get("HERMES_CLAUDE_BIN", "/mdr5/guest/users/zhouyan/.local/bin/claude")
+WORK_DIR = Path(os.environ.get("HERMES_WORK_DIR", "/mdr5/guest/users/zhangshuo/zyf"))
+CLAUDE_BIN = os.environ.get("HERMES_CLAUDE_BIN", "/usr/bin/claude")
 CLAUDE_MODEL = os.environ.get("HERMES_CLAUDE_MODEL", "claude-opus-4-8")
 CLAUDE_EFFORT = os.environ.get("HERMES_CLAUDE_EFFORT", "high")
 CLAUDE_PERMISSION_MODE = os.environ.get("HERMES_CLAUDE_PERMISSION_MODE", "bypassPermissions")

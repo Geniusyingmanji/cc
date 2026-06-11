@@ -1,7 +1,7 @@
 # cc-connect configuration for sufe / zhouyan.
 
 language = "zh"
-data_dir = "/mdr5/guest/users/zhouyan/share/quantaalpha/ymj/cc-connect-server/data"
+data_dir = "/mdr5/guest/users/zhangshuo/zyf/cc-connect-server/data"
 attachment_send = "on"
 
 # GLOBAL key (Engine-level). Must be top-level, NOT under [[projects]] or it is ignored.
@@ -33,12 +33,12 @@ admin_from = "${FEISHU_ADMIN_FROM}"
 type = "codex"
 
 [projects.agent.options]
-work_dir = "/mdr5/guest/users/zhouyan/share/quantaalpha/ymj"
+work_dir = "/mdr5/guest/users/zhangshuo/zyf"
 mode = "yolo"
 reasoning_effort = "xhigh"
 model = "gpt-5.5"
-codex_home = "/mdr5/guest/users/zhouyan/.codex"
-cli_path = "/mdr5/guest/users/zhouyan/share/quantaalpha/ymj/cc-connect-server/bin/hermes-codex"
+codex_home = "/mdr5/guest/users/zhangshuo/.codex"
+cli_path = "/mdr5/guest/users/zhangshuo/zyf/cc-connect-server/bin/hermes-codex"
 
 [projects.references]
 normalize_agents = ["codex", "claudecode"]
