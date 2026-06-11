@@ -23,7 +23,7 @@ export HERMES_WORK_DIR="$BASE"
 export HERMES_DEFAULT_PROVIDER="claudecode"
 export HERMES_CODEX_REAL="$HOME/.local/bin/codex-real"
 export HERMES_CLAUDE_BIN="/usr/bin/claude"
-export HERMES_CLAUDE_MODEL="claude-opus-4-8"
+export HERMES_CLAUDE_MODEL="claude-fable-5"
 export HERMES_CLAUDE_EFFORT="high"
 export HERMES_CLAUDE_PERMISSION_MODE="bypassPermissions"
 
