@@ -1,0 +1,60 @@
+# cc-connect configuration for sufe / zhouyan.
+
+language = "zh"
+data_dir = "/mdr5/guest/users/zhouyan/share/quantaalpha/ymj/cc-connect-server/data"
+attachment_send = "on"
+
+# GLOBAL key (Engine-level). Must be top-level, NOT under [[projects]] or it is ignored.
+# Long-running claude -p tasks emit no events for hours; default 120min was killing them. 720=12h, 0=off.
+idle_timeout_mins = 720
+
+[log]
+level = "info"
+
+[stream_preview]
+enabled = true
+interval_ms = 1500
+min_delta_chars = 30
+max_chars = 2000
+
+[rate_limit]
+max_messages = 20
+window_secs = 60
+
+[[projects]]
+name = "sufe-claude"
+filter_external_sessions = false
+# Fill FEISHU_ALLOW_FROM with your Feishu open_id after /whoami.
+# For first bootstrap only, use "*" in .env, send /whoami, then lock it down.
+admin_from = "${FEISHU_ADMIN_FROM}"
+
+
+[projects.agent]
+type = "codex"
+
+[projects.agent.options]
+work_dir = "/mdr5/guest/users/zhouyan/share/quantaalpha/ymj"
+mode = "yolo"
+reasoning_effort = "xhigh"
+model = "gpt-5.5"
+codex_home = "/mdr5/guest/users/zhouyan/.codex"
+cli_path = "/mdr5/guest/users/zhouyan/share/quantaalpha/ymj/cc-connect-server/bin/hermes-codex"
+
+[projects.references]
+normalize_agents = ["codex", "claudecode"]
+render_platforms = ["feishu"]
+display_path = "dirname_basename"
+marker_style = "ascii"
+enclosure_style = "code"
+
+[[projects.platforms]]
+type = "feishu"
+
+[projects.platforms.options]
+app_id = "${FEISHU_APP_ID}"
+app_secret = "${FEISHU_APP_SECRET}"
+allow_from = "${FEISHU_ALLOW_FROM}"
+enable_feishu_card = true
+group_reply_all = true
+reaction_emoji = "OnIt"
+done_emoji = "Done"

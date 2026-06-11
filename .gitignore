@@ -1,27 +1,37 @@
-# Private migration payloads. Keep these local or transfer over a private channel.
-*.tar
-*.tar.gz
-*.tar.zst
-*.tgz
-*.zip
-*.part-*
-current_*/
+# ---- secrets (NEVER commit) ----
+.env
+*.credentials.json
+claude-home/
+.proxy_*
+*.golden
+*.md5
 
-# Local credentials and runtime-only scripts.
-watchdog.sh
-proxy-18899.js
-*.env
-*.key
-*.pem
-*.crt
-*.sqlite
-*.sqlite-*
-.credentials*
-auth.json
-config.toml
-
-# Tool/runtime noise.
-node_modules/
-.DS_Store
+# ---- runtime / state ----
+data/
+run/
+logs/
 *.log
-tmp/
+*.lock
+hermes_state/sessions.json
+hermes_state/hermes.log
+hermes_state/memory.md         # research/project IP — keep private
+
+# ---- deps / build ----
+node_modules/
+
+# ---- backups / scratch ----
+*.bak.*
+*.bak
+*.prestream
+
+# ---- symlinks to server-absolute paths ----
+bin/codex
+
+# ---- python ----
+__pycache__/
+*.pyc
+.venv/
+*.pth
+*.pt
+*.ckpt
+*.bin

@@ -1,0 +1,684 @@
+#!/usr/bin/env python3
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+import time
+import uuid
+from pathlib import Path
+
+
+BASE = Path(os.environ.get("HERMES_BASE", "/mdr5/guest/users/zhouyan/share/quantaalpha/ymj/cc-connect-server"))
+STATE_DIR = Path(os.environ.get("HERMES_STATE_DIR", str(BASE / "hermes_state")))
+PROVIDER_FILE = STATE_DIR / "provider.txt"
+POLICY_FILE = STATE_DIR / "policy.md"
+MEMORY_FILE = STATE_DIR / "memory.md"
+SESSIONS_FILE = STATE_DIR / "sessions.json"
+LOG_FILE = STATE_DIR / "hermes.log"
+
+WORK_DIR = Path(os.environ.get("HERMES_WORK_DIR", "/mdr5/guest/users/zhouyan/share/quantaalpha/ymj"))
+CLAUDE_BIN = os.environ.get("HERMES_CLAUDE_BIN", "/mdr5/guest/users/zhouyan/.local/bin/claude")
+CLAUDE_MODEL = os.environ.get("HERMES_CLAUDE_MODEL", "claude-opus-4-8")
+CLAUDE_EFFORT = os.environ.get("HERMES_CLAUDE_EFFORT", "high")
+CLAUDE_PERMISSION_MODE = os.environ.get("HERMES_CLAUDE_PERMISSION_MODE", "bypassPermissions")
+CODEX_REAL = os.environ.get("HERMES_CODEX_REAL", "/mdr5/guest/users/zhouyan/.local/bin/codex-real")
+CODEX_PROFILE = os.environ.get("HERMES_CODEX_PROFILE", "")
+DEFAULT_PROVIDER = os.environ.get("HERMES_DEFAULT_PROVIDER", "claudecode")
+
+VALUE_OPTS = {
+    "-c",
+    "--config",
+    "-i",
+    "--image",
+    "-m",
+    "--model",
+    "-p",
+    "--profile",
+    "-s",
+    "--sandbox",
+    "-C",
+    "--cd",
+    "--add-dir",
+    "--output-schema",
+    "-o",
+    "--output-last-message",
+}
+
+
+def ensure_state() -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    (STATE_DIR / "skills").mkdir(parents=True, exist_ok=True)
+    if not PROVIDER_FILE.exists():
+        PROVIDER_FILE.write_text(normalize_provider(DEFAULT_PROVIDER) + "\n", encoding="utf-8")
+    if not MEMORY_FILE.exists():
+        MEMORY_FILE.write_text("", encoding="utf-8")
+    if not SESSIONS_FILE.exists():
+        save_sessions({"threads": {}, "last_thread": ""})
+
+
+def debug(message: str) -> None:
+    if os.environ.get("HERMES_DEBUG") != "1":
+        return
+    ensure_state()
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    with LOG_FILE.open("a", encoding="utf-8") as f:
+        f.write(f"[{stamp}] {message}\n")
+
+
+def load_proxy_env(env: dict) -> dict:
+    proxy_file = Path.home() / ".proxy_sufe"
+    if not proxy_file.exists():
+        return env
+    for raw in proxy_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].strip()
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", key):
+            continue
+        value = value.strip()
+        try:
+            parts = shlex.split(value)
+            value = parts[0] if parts else ""
+        except ValueError:
+            value = value.strip("\"'")
+        value = re.sub(
+            r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?",
+            lambda match: env.get(match.group(1), os.environ.get(match.group(1), match.group(0))),
+            value,
+        )
+        env[key] = value
+        if key == "http_proxy":
+            env["HTTP_PROXY"] = value
+        elif key == "https_proxy":
+            env["HTTPS_PROXY"] = value
+        elif key == "no_proxy":
+            env["NO_PROXY"] = value
+    return env
+
+
+def normalize_provider(provider: str) -> str:
+    value = (provider or "").strip().lower()
+    if value in {"claude", "claude-code", "claude_code"}:
+        return "claudecode"
+    if value in {"codex", "claudecode"}:
+        return value
+    return "claudecode"
+
+
+def current_provider() -> str:
+    ensure_state()
+    return normalize_provider(PROVIDER_FILE.read_text(encoding="utf-8", errors="ignore"))
+
+
+def set_provider(provider: str) -> str:
+    ensure_state()
+    provider = normalize_provider(provider)
+    PROVIDER_FILE.write_text(provider + "\n", encoding="utf-8")
+    return provider
+
+
+def load_sessions() -> dict:
+    ensure_state()
+    try:
+        data = json.loads(SESSIONS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        data = {}
+    data.setdefault("threads", {})
+    data.setdefault("last_thread", "")
+    return data
+
+
+def save_sessions(data: dict) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = SESSIONS_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(SESSIONS_FILE)
+
+
+def read_text(path: Path, limit: int = 20000) -> str:
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except FileNotFoundError:
+        return ""
+    return text[:limit]
+
+
+def skill_files() -> list[Path]:
+    roots = [
+        STATE_DIR / "skills",
+        Path.home() / ".codex" / "skills",
+        WORK_DIR / ".agents",
+    ]
+    files: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        if not root.exists():
+            continue
+        for path in root.rglob("*.md"):
+            if root.name == ".agents":
+                pass
+            elif path.name != "SKILL.md":
+                continue
+            key = str(path.resolve())
+            if key in seen:
+                continue
+            seen.add(key)
+            files.append(path)
+    return files
+
+
+def skill_meta(path: Path) -> tuple[str, str]:
+    text = read_text(path, 5000)
+    name = path.parent.name if path.name == "SKILL.md" else path.stem
+    desc = ""
+    m_name = re.search(r"(?m)^name:\s*[\"']?([^\"'\n]+)", text)
+    m_desc = re.search(r"(?m)^description:\s*[\"']?([^\"'\n]+)", text)
+    if m_name:
+        name = m_name.group(1).strip()
+    if m_desc:
+        desc = m_desc.group(1).strip()
+    if not desc:
+        for line in text.splitlines():
+            line = line.strip("# ").strip()
+            if line and not line.startswith("---"):
+                desc = line[:180]
+                break
+    return name, desc
+
+
+def score_skill(prompt: str, name: str, desc: str) -> int:
+    hay = (prompt + " " + name + " " + desc).lower()
+    score = 0
+    for token in re.findall(r"[A-Za-z0-9_\-]{3,}", (name + " " + desc).lower()):
+        if token in prompt.lower():
+            score += 3 if token in name.lower() else 1
+    keyword_map = {
+        "experiment": ["实验", "训练", "跑", "gpu", "train"],
+        "paper": ["论文", "投稿", "写作", "paper"],
+        "review": ["审稿", "review", "评审"],
+        "idea": ["idea", "想法", "选题", "创新"],
+        "figure": ["图", "画图", "figure"],
+        "arxiv": ["arxiv", "文献", "paper"],
+    }
+    for token, aliases in keyword_map.items():
+        if token in hay and any(alias.lower() in prompt.lower() for alias in aliases):
+            score += 5
+    return score
+
+
+def render_skills(prompt: str) -> str:
+    files = skill_files()
+    metas = []
+    seen_names: set[str] = set()
+    for path in files:
+        name, desc = skill_meta(path)
+        norm = name.strip().lower()
+        if not norm or norm in seen_names:
+            continue
+        seen_names.add(norm)
+        metas.append((path, name, desc))
+    index_lines = [f"- {name}: {desc}" if desc else f"- {name}" for _, name, desc in metas]
+    scored = sorted(
+        ((score_skill(prompt, name, desc), path, name, desc) for path, name, desc in metas),
+        key=lambda item: item[0],
+        reverse=True,
+    )
+    max_skills = int(os.environ.get("HERMES_MAX_SKILLS", "5"))
+    max_chars = int(os.environ.get("HERMES_MAX_SKILL_CHARS", "18000"))
+    selected = [item for item in scored if item[0] > 0][:max_skills]
+    chunks: list[str] = []
+    budget = max_chars
+    for _, path, name, _ in selected:
+        text = read_text(path, min(6000, budget))
+        if not text:
+            continue
+        chunks.append(f"## Skill: {name}\nPath: {path}\n\n{text[:budget]}")
+        budget -= len(text)
+        if budget <= 0:
+            break
+    index = "\n".join(index_lines[:120])
+    selected_text = "\n\n".join(chunks)
+    return f"### Available skill index\n{index}\n\n### Retrieved skill details\n{selected_text}"
+
+
+def wrap_prompt(prompt: str, provider: str) -> str:
+    policy = read_text(POLICY_FILE, 12000).strip()
+    memory = read_text(MEMORY_FILE, 12000).strip()
+    skills = render_skills(prompt)
+    return "\n\n".join(
+        [
+            "# Hermes Runtime Context",
+            "You are running behind cc-connect as Hermes. Use the policy, memory, and retrieved skills below as operational context. Do not expose secrets. If a durable fact should be remembered, update hermes_state/memory.md.",
+            f"- provider: {provider}",
+            f"- work_dir: {WORK_DIR}",
+            f"- state_dir: {STATE_DIR}",
+            "## Policy\n" + (policy or "(empty)"),
+            "## Memory\n" + (memory or "(empty)"),
+            "## Skills\n" + skills,
+            "# User Message\n" + prompt,
+        ]
+    )
+
+
+def parse_exec_args(args: list[str]) -> dict:
+    parsed = {
+        "json": False,
+        "output_file": "",
+        "cd": "",
+        "passthrough": [],
+        "positionals": [],
+        "images": [],
+    }
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--":
+            parsed["positionals"].extend(args[i + 1 :])
+            break
+        if arg.startswith("--") and "=" in arg:
+            opt, value = arg.split("=", 1)
+            parsed["passthrough"].append(arg)
+            if opt == "--json":
+                parsed["json"] = True
+            elif opt in {"--output-last-message"}:
+                parsed["output_file"] = value
+            elif opt == "--cd":
+                parsed["cd"] = value
+            elif opt == "--image":
+                parsed["images"].append(value)
+            i += 1
+            continue
+        if arg.startswith("-"):
+            parsed["passthrough"].append(arg)
+            if arg == "--json":
+                parsed["json"] = True
+            if arg in VALUE_OPTS and i + 1 < len(args):
+                value = args[i + 1]
+                parsed["passthrough"].append(value)
+                if arg in {"-o", "--output-last-message"}:
+                    parsed["output_file"] = value
+                elif arg in {"-C", "--cd"}:
+                    parsed["cd"] = value
+                elif arg in {"-i", "--image"}:
+                    parsed["images"].append(value)
+                i += 2
+            else:
+                i += 1
+            continue
+        parsed["positionals"].append(arg)
+        i += 1
+    return parsed
+
+
+def prompt_from(parsed: dict) -> tuple[bool, str, str]:
+    pos = list(parsed["positionals"])
+    is_resume = bool(pos and pos[0] == "resume")
+    resume_thread = ""
+    prompt_parts: list[str] = []
+    if is_resume:
+        pos.pop(0)
+        if pos and not pos[0].startswith("/"):
+            resume_thread = pos.pop(0)
+        prompt_parts = pos
+    else:
+        prompt_parts = pos
+    stdin_text = ""
+    if not sys.stdin.isatty():
+        stdin_text = sys.stdin.read()
+    prompt = " ".join(prompt_parts).strip()
+    if prompt == "-":
+        prompt = stdin_text.strip()
+    elif prompt and stdin_text.strip():
+        prompt = prompt + "\n\n<stdin>\n" + stdin_text.strip() + "\n</stdin>"
+    elif not prompt:
+        prompt = stdin_text.strip()
+    if parsed["images"]:
+        prompt += "\n\nAttached image/file paths:\n" + "\n".join(f"- {p}" for p in parsed["images"])
+    return is_resume, resume_thread, prompt
+
+
+def print_json_event(obj: dict) -> None:
+    print(json.dumps(obj, ensure_ascii=False), flush=True)
+
+
+def emit_text(text: str, thread_id: str = "", usage: dict | None = None, as_json: bool = True) -> None:
+    if not as_json:
+        print(text)
+        return
+    thread_id = thread_id or str(uuid.uuid4())
+    print_json_event({"type": "thread.started", "thread_id": thread_id})
+    print_json_event({"type": "turn.started"})
+    print_json_event({"type": "item.completed", "item": {"id": "item_0", "type": "agent_message", "text": text}})
+    print_json_event({"type": "turn.completed", "usage": usage or {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0, "reasoning_output_tokens": 0}})
+
+
+def count_skills() -> int:
+    names = set()
+    for path in skill_files():
+        if path.name != "SKILL.md":
+            continue
+        name, _ = skill_meta(path)
+        names.add(name.strip().lower())
+    return len(names)
+
+
+def handle_hermes_command(prompt: str, thread_id: str, as_json: bool) -> bool:
+    stripped = prompt.strip()
+    lower = stripped.lower()
+    if lower in {"/hermes", "/hermes help"}:
+        emit_text(
+            "\n".join(
+                [
+                    "Hermes commands:",
+                    "- /hermes status",
+                    "- /hermes provider codex|claude",
+                    "- /hermes memory",
+                    "- /hermes memory add <text>",
+                    "- /hermes skill list",
+                    "- /hermes reset",
+                    "- /claude <message>, /claude-new <message>",
+                    "- /codex <message>, /codex-new <message>",
+                ]
+            ),
+            thread_id,
+            as_json=as_json,
+        )
+        return True
+    if lower in {"/hermes status", "/provider"}:
+        sessions = load_sessions()
+        active = len(sessions.get("threads", {}))
+        emit_text(
+            "\n".join(
+                [
+                    "Hermes status",
+                    f"provider: {current_provider()}",
+                    f"claude_model: {CLAUDE_MODEL}",
+                    f"claude_effort: {CLAUDE_EFFORT}",
+                    f"work_dir: {WORK_DIR}",
+                    f"state_dir: {STATE_DIR}",
+                    f"skills: {count_skills()}",
+                    f"tracked_threads: {active}",
+                ]
+            ),
+            thread_id,
+            as_json=as_json,
+        )
+        return True
+    m = re.match(r"^/(?:hermes\s+provider|provider)\s+(\S+)\s*$", stripped, re.I)
+    if m:
+        provider = set_provider(m.group(1))
+        emit_text(f"Hermes provider set to {provider}.", thread_id, as_json=as_json)
+        return True
+    if lower == "/hermes reset":
+        save_sessions({"threads": {}, "last_thread": ""})
+        emit_text("Hermes session mapping reset. The next model message will start a fresh agent session.", thread_id, as_json=as_json)
+        return True
+    if lower == "/hermes memory":
+        memory = read_text(MEMORY_FILE, 12000).strip() or "(empty)"
+        emit_text(memory, thread_id, as_json=as_json)
+        return True
+    m = re.match(r"^/hermes\s+memory\s+add\s+(.+)$", stripped, re.I | re.S)
+    if m:
+        text = m.group(1).strip()
+        stamp = time.strftime("%Y-%m-%d %H:%M")
+        with MEMORY_FILE.open("a", encoding="utf-8") as f:
+            f.write(f"\n- {stamp}: {text}\n")
+        emit_text("Memory updated.", thread_id, as_json=as_json)
+        return True
+    if lower == "/hermes skill list":
+        metas = sorted(skill_meta(path)[0] for path in skill_files() if path.name == "SKILL.md")
+        emit_text("Hermes skills:\n" + "\n".join(f"- {name}" for name in metas), thread_id, as_json=as_json)
+        return True
+    return False
+
+
+def route_override(prompt: str) -> tuple[str | None, str, bool]:
+    stripped = prompt.strip()
+    for cmd, provider, fresh in [
+        ("/claude-new ", "claudecode", True),
+        ("/claude ", "claudecode", False),
+        ("/codex-new ", "codex", True),
+        ("/codex ", "codex", False),
+    ]:
+        if stripped.lower().startswith(cmd):
+            return provider, stripped[len(cmd) :].strip(), fresh
+    return None, prompt, False
+
+
+def claude_usage(data: dict) -> dict:
+    usage = data.get("usage") or {}
+    return {
+        "input_tokens": int(usage.get("input_tokens") or 0),
+        "cached_input_tokens": int(usage.get("cache_read_input_tokens") or usage.get("cached_input_tokens") or 0),
+        "output_tokens": int(usage.get("output_tokens") or 0),
+        "reasoning_output_tokens": int(usage.get("reasoning_output_tokens") or 0),
+    }
+
+
+def describe_tool_use(name: str, tool_input: dict) -> str:
+    if name == "Bash":
+        return tool_input.get("command") or "bash"
+    if name in {"Read", "Write", "Edit", "NotebookEdit"}:
+        target = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
+        return f"{name} {target}".strip()
+    if name in {"Glob", "Grep"}:
+        return f"{name} {tool_input.get('pattern') or ''}".strip()
+    if name in {"Task", "Agent"}:
+        return f"{name}: {tool_input.get('description') or tool_input.get('prompt', '')[:120]}".strip()
+    if name == "WebSearch":
+        return f"WebSearch: {tool_input.get('query') or ''}".strip()
+    if name == "WebFetch":
+        return f"WebFetch: {tool_input.get('url') or ''}".strip()
+    if name == "TodoWrite":
+        todos = tool_input.get("todos") or []
+        active = next((t.get("content") for t in todos if t.get("status") == "in_progress"), "")
+        return f"Todo: {active}" if active else "TodoWrite"
+    try:
+        args = json.dumps(tool_input, ensure_ascii=False)
+    except Exception:
+        args = ""
+    return f"{name} {args[:200]}".strip()
+
+
+def claude_stream_once(wrapped: str, cwd: str, env: dict, claude_session: str, thread_id: str, started: bool) -> tuple[int, dict, str, bool]:
+    """Run claude in stream-json mode, forwarding tool_use events as codex-style
+    command_execution items so the platform shows live progress.
+    Returns (returncode, result_data, stderr, started)."""
+    cmd = [
+        CLAUDE_BIN,
+        "-p",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--model",
+        CLAUDE_MODEL,
+        "--effort",
+        CLAUDE_EFFORT,
+        "--permission-mode",
+        CLAUDE_PERMISSION_MODE,
+    ]
+    if claude_session:
+        cmd.extend(["--resume", claude_session])
+    debug("claude cmd: " + " ".join(shlex.quote(x) for x in cmd))
+    proc = subprocess.Popen(
+        cmd, cwd=cwd, env=env, text=True,
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    assert proc.stdin is not None and proc.stdout is not None
+    proc.stdin.write(wrapped)
+    proc.stdin.close()
+    data: dict = {}
+    item_no = 0
+    for line in proc.stdout:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except Exception:
+            continue
+        otype = obj.get("type")
+        if otype == "system" and obj.get("subtype") == "init":
+            if not started:
+                print_json_event({"type": "thread.started", "thread_id": thread_id})
+                print_json_event({"type": "turn.started"})
+                started = True
+        elif otype == "assistant":
+            for block in (obj.get("message") or {}).get("content") or []:
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    item_no += 1
+                    print_json_event({
+                        "type": "item.completed",
+                        "item": {
+                            "id": f"item_{item_no}",
+                            "type": "command_execution",
+                            "command": describe_tool_use(block.get("name") or "tool", block.get("input") or {}),
+                            "aggregated_output": "",
+                            "exit_code": 0,
+                            "status": "completed",
+                        },
+                    })
+        elif otype == "result":
+            data = obj
+    stderr = proc.stderr.read() if proc.stderr else ""
+    rc = proc.wait()
+    return rc, data, (stderr or "").strip(), started
+
+
+def run_claude(prompt: str, parsed: dict, resume_thread: str, force_new: bool, as_json: bool) -> int:
+    sessions = load_sessions()
+    threads = sessions.setdefault("threads", {})
+    thread_id = "" if force_new else resume_thread
+    if not thread_id:
+        thread_id = str(uuid.uuid4())
+    mapped = threads.get(thread_id, {})
+    claude_session = "" if force_new else mapped.get("claude_session", "")
+    wrapped = wrap_prompt(prompt, "claudecode")
+    if os.environ.get("HERMES_DRY_RUN") == "1":
+        emit_text(wrapped, thread_id, as_json=as_json)
+        return 0
+    env = load_proxy_env(os.environ.copy())
+    env["HERMES_ACTIVE_PROVIDER"] = "claudecode"
+    cwd = parsed.get("cd") or str(WORK_DIR)
+    started = False
+    rc, data, stderr, started = claude_stream_once(wrapped, cwd, env, claude_session, thread_id, started)
+    if (rc != 0 or data.get("is_error")) and claude_session:
+        debug(f"claude resume failed, retry fresh: rc={rc} stderr={stderr[:500]}")
+        rc, data, stderr, started = claude_stream_once(wrapped, cwd, env, "", thread_id, started)
+        claude_session = ""
+    result = data.get("result") or ""
+    if rc != 0 or data.get("is_error") or not result:
+        detail = result or stderr or f"empty Claude Code output (exit={rc})"
+        result = "Claude Code failed:\n" + detail
+    new_claude_session = data.get("session_id") or claude_session
+    if new_claude_session:
+        threads[thread_id] = {"provider": "claudecode", "claude_session": new_claude_session, "updated_at": int(time.time())}
+        sessions["last_thread"] = thread_id
+        save_sessions(sessions)
+    output_file = parsed.get("output_file")
+    if output_file:
+        Path(output_file).write_text(result, encoding="utf-8")
+    if not as_json:
+        print(result)
+    else:
+        if not started:
+            print_json_event({"type": "thread.started", "thread_id": thread_id})
+            print_json_event({"type": "turn.started"})
+        print_json_event({"type": "item.completed", "item": {"id": "item_final", "type": "agent_message", "text": result}})
+        print_json_event({"type": "turn.completed", "usage": claude_usage(data)})
+    return 0 if rc == 0 and not data.get("is_error") else 1
+
+
+def passthrough_without_profile(args: list[str]) -> list[str]:
+    if CODEX_PROFILE:
+        has_profile = any(a in {"-p", "--profile"} or a.startswith("--profile=") for a in args)
+        if not has_profile:
+            return args + ["--profile", CODEX_PROFILE]
+    return args
+
+
+def run_codex(prompt: str, parsed: dict, resume_thread: str, force_new: bool) -> int:
+    sessions = load_sessions()
+    threads = sessions.setdefault("threads", {})
+    can_resume = bool(resume_thread and not force_new and threads.get(resume_thread, {}).get("provider") == "codex")
+    wrapped = wrap_prompt(prompt, "codex")
+    passthrough = passthrough_without_profile(parsed["passthrough"])
+    cmd = [CODEX_REAL, "exec"]
+    if can_resume:
+        cmd.append("resume")
+        cmd.extend(passthrough)
+        cmd.append(resume_thread)
+    else:
+        cmd.extend(passthrough)
+    cmd.append(wrapped)
+    if os.environ.get("HERMES_DRY_RUN") == "1":
+        print(" ".join(shlex.quote(x) for x in cmd))
+        return 0
+    env = load_proxy_env(os.environ.copy())
+    env["HERMES_ACTIVE_PROVIDER"] = "codex"
+    cwd = parsed.get("cd") or str(WORK_DIR)
+    debug("codex cmd: " + " ".join(shlex.quote(x) for x in cmd))
+    proc = subprocess.Popen(cmd, cwd=cwd, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    seen_thread = ""
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        sys.stdout.write(line)
+        sys.stdout.flush()
+        try:
+            obj = json.loads(line)
+            if obj.get("type") == "thread.started" and obj.get("thread_id"):
+                seen_thread = obj["thread_id"]
+        except Exception:
+            pass
+    _, stderr = proc.communicate()
+    if stderr:
+        sys.stderr.write(stderr)
+        sys.stderr.flush()
+    if seen_thread:
+        threads[seen_thread] = {"provider": "codex", "updated_at": int(time.time())}
+        sessions["last_thread"] = seen_thread
+        save_sessions(sessions)
+    return proc.returncode
+
+
+def main() -> int:
+    ensure_state()
+    argv = sys.argv[1:]
+    if not argv:
+        real = CODEX_REAL if Path(CODEX_REAL).exists() else "codex"
+        os.execv(real, [real])
+    if argv[0] in {"--version", "-V", "version"}:
+        print("hermes-codex 0.1")
+        return 0
+    if argv[0] not in {"exec"}:
+        real = CODEX_REAL if Path(CODEX_REAL).exists() else "codex"
+        os.execv(real, [real] + argv)
+    parsed = parse_exec_args(argv[1:])
+    is_resume, resume_thread, prompt = prompt_from(parsed)
+    as_json = bool(parsed["json"])
+    thread_for_command = resume_thread or str(uuid.uuid4())
+    if not prompt:
+        prompt = ""
+    forced_provider, stripped_prompt, force_new = route_override(prompt)
+    prompt = stripped_prompt
+    if handle_hermes_command(prompt, thread_for_command, as_json):
+        return 0
+    provider = normalize_provider(forced_provider or current_provider())
+    if provider == "codex":
+        return run_codex(prompt, parsed, resume_thread if is_resume else "", force_new)
+    return run_claude(prompt, parsed, resume_thread if is_resume else "", force_new, as_json)
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        raise SystemExit(130)
